@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gold Hunter Arena</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; }
+    canvas { border: 2px solid #fff; background: #222; }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="1024" height="768"></canvas>
+  <div id="gameOverMsg" style="position:fixed;top:0;left:0;width:100vw;height:100vh;display:none;flex-direction:column;justify-content:center;align-items:center;background:rgba(0,0,0,0.8);color:white;font-size:2em;z-index:10;">
+    <div id="gameOverText"></div>
+    <div style="margin-top:32px;display:flex;gap:16px;">
+      <button id="btnRestart" style="font-size:1em;padding:10px 24px;cursor:pointer;">Jogar Novamente</button>
+      <button id="btnChangeName" style="font-size:1em;padding:10px 24px;cursor:pointer;">Trocar Nome</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const tileSize = 32;
+    let rows = canvas.height / tileSize;
+    let cols = canvas.width / tileSize;
+
+    let player = { x: 5, y: 5, gold: 0, dir: 'right', life: 3, name: '' };
+    let bullets = [];
+    let enemies = [];
+    let goldPoints = [];
+    let enemyMoveCounter = 0;
+    let gameOver = false;
+    const enemyNames = ["Zog", "Bip", "Rex", "Mok", "Luz", "Pax", "Vex", "Gor", "Dex", "Nox", "Fiz", "Rik", "Taz", "Jax", "Wex", "Qop", "Zin", "Bax", "Lir", "Miz"];
+
+    function getRandomEnemyName(usedNames) {
+      let name;
+      do {
+        name = enemyNames[Math.floor(Math.random() * enemyNames.length)];
+      } while (usedNames.has(name));
+      usedNames.add(name);
+      return name;
+    }
+
+    // --- Procedural Arena Generation (Pac-Man style) ---
+    function generateArena(cols, rows) {
+      // Garante dimensões ímpares para simetria
+      if (cols % 2 === 0) cols--;
+      if (rows % 2 === 0) rows--;
+      let arena = Array.from({ length: rows }, () => Array(cols).fill(1)); // 1=caminho, 0=parede
+      // Bordas
+      for (let y = 0; y < rows; y++) {
+        arena[y][0] = 0;
+        arena[y][cols - 1] = 0;
+      }
+      for (let x = 0; x < cols; x++) {
+        arena[0][x] = 0;
+        arena[rows - 1][x] = 0;
+      }
+      // Áreas centrais abertas
+      let cx = Math.floor(cols / 2);
+      let cy = Math.floor(rows / 2);
+      for (let y = cy - 2; y <= cy + 2; y++) {
+        for (let x = cx - 3; x <= cx + 3; x++) {
+          if (y > 0 && y < rows - 1 && x > 0 && x < cols - 1) arena[y][x] = 1;
+        }
+      }
+      // Cruzamentos regulares
+      for (let y = 2; y < rows - 2; y += 4) {
+        for (let x = 2; x < cols - 2; x += 4) {
+          arena[y][x] = 1;
+          if (y + 1 < rows - 1) arena[y + 1][x] = 1;
+          if (x + 1 < cols - 1) arena[y][x + 1] = 1;
+        }
+      }
+      // Paredes curtas e simétricas
+      for (let y = 2; y < rows - 2; y += 2) {
+        for (let x = 2; x < Math.floor(cols / 2); x += 2) {
+          if (Math.random() < 0.35) {
+            arena[y][x] = 0;
+            arena[y][cols - 1 - x] = 0; // simetria horizontal
+          }
+        }
+      }
+      // Túneis laterais
+      let tunnelRow = cy;
+      arena[tunnelRow][0] = 1;
+      arena[tunnelRow][cols - 1] = 1;
+      return arena;
+    }
+
+    // --- Adaptar entidades para a arena ---
+    let maze = generateArena(cols, rows);
+    rows = maze.length;
+    cols = maze[0].length;
+
+    function isPath(x, y) {
+      return maze[y] && maze[y][x] === 1;
+    }
+
+    function randomPathCell() {
+      let x, y;
+      do {
+        x = Math.floor(Math.random() * cols);
+        y = Math.floor(Math.random() * rows);
+      } while (!isPath(x, y));
+      return { x, y };
+    }
+
+    // Atualizar spawnGold
+    function spawnGold() {
+      while (goldPoints.length < 40) {
+        const { x: gx, y: gy } = randomPathCell();
+        if ((gx !== player.x || gy !== player.y) && !goldPoints.some(g => g.x === gx && g.y === gy)) {
+          goldPoints.push({ x: gx, y: gy });
+        }
+      }
+    }
+
+    // Atualizar spawnEnemies
+    function spawnEnemies() {
+      let count = 0;
+      let usedNames = new Set();
+      while (count < 3) {
+        const { x: ex, y: ey } = randomPathCell();
+        const isOnPlayer = ex === player.x && ey === player.y;
+        const isOnOtherEnemy = enemies.some(e => e.x === ex && e.y === ey);
+        if (!isOnPlayer && !isOnOtherEnemy) {
+          const name = getRandomEnemyName(usedNames);
+          enemies.push({ x: ex, y: ey, gold: 0, dir: 'right', name });
+          count++;
+        }
+      }
+    }
+
+    function drawTile(x, y, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x * tileSize, y * tileSize, tileSize - 2, tileSize - 2);
+    }
+
+    function drawPlayer() {
+      // Corpo
+      drawTile(player.x, player.y, 'lime');
+      // Olhos
+      ctx.fillStyle = 'black';
+      let eyeOffset = 6;
+      let px = player.x * tileSize;
+      let py = player.y * tileSize;
+      if (player.dir === 'right') {
+        ctx.beginPath();
+        ctx.arc(px + tileSize - eyeOffset, py + eyeOffset, 3, 0, 2 * Math.PI);
+        ctx.arc(px + tileSize - eyeOffset, py + tileSize - eyeOffset, 3, 0, 2 * Math.PI);
+        ctx.fill();
+      } else if (player.dir === 'left') {
+        ctx.beginPath();
+        ctx.arc(px + eyeOffset, py + eyeOffset, 3, 0, 2 * Math.PI);
+        ctx.arc(px + eyeOffset, py + tileSize - eyeOffset, 3, 0, 2 * Math.PI);
+        ctx.fill();
+      } else if (player.dir === 'up') {
+        ctx.beginPath();
+        ctx.arc(px + eyeOffset, py + eyeOffset, 3, 0, 2 * Math.PI);
+        ctx.arc(px + tileSize - eyeOffset, py + eyeOffset, 3, 0, 2 * Math.PI);
+        ctx.fill();
+      } else if (player.dir === 'down') {
+        ctx.beginPath();
+        ctx.arc(px + eyeOffset, py + tileSize - eyeOffset, 3, 0, 2 * Math.PI);
+        ctx.arc(px + tileSize - eyeOffset, py + tileSize - eyeOffset, 3, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawMaze();
+
+      for (const gold of goldPoints) {
+        drawTile(gold.x, gold.y, 'gold');
+      }
+
+      for (const e of enemies) {
+        drawTile(e.x, e.y, 'red');
+        // Nome acima do inimigo
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(e.name, e.x * tileSize + tileSize / 2, e.y * tileSize - 4);
+        // Olhos dos inimigos
+        ctx.fillStyle = 'black';
+        let eyeOffset = 6;
+        let px = e.x * tileSize;
+        let py = e.y * tileSize;
+        if (e.dir === 'right') {
+          ctx.beginPath();
+          ctx.arc(px + tileSize - eyeOffset, py + eyeOffset, 3, 0, 2 * Math.PI);
+          ctx.arc(px + tileSize - eyeOffset, py + tileSize - eyeOffset, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        } else if (e.dir === 'left') {
+          ctx.beginPath();
+          ctx.arc(px + eyeOffset, py + eyeOffset, 3, 0, 2 * Math.PI);
+          ctx.arc(px + eyeOffset, py + tileSize - eyeOffset, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        } else if (e.dir === 'up') {
+          ctx.beginPath();
+          ctx.arc(px + eyeOffset, py + eyeOffset, 3, 0, 2 * Math.PI);
+          ctx.arc(px + tileSize - eyeOffset, py + eyeOffset, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        } else if (e.dir === 'down') {
+          ctx.beginPath();
+          ctx.arc(px + eyeOffset, py + tileSize - eyeOffset, 3, 0, 2 * Math.PI);
+          ctx.arc(px + tileSize - eyeOffset, py + tileSize - eyeOffset, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
+
+      drawPlayer();
+
+      for (const b of bullets) {
+        ctx.fillStyle = b.fromEnemy ? 'red' : 'white';
+        ctx.fillRect(b.x, b.y, 4, 4);
+      }
+
+      ctx.fillStyle = 'white';
+      ctx.textAlign = 'left';
+      ctx.font = '16px sans-serif';
+      ctx.fillText(`Jogador: ${player.name}`, 10, 20);
+      ctx.fillText(`Ouro: ${player.gold}`, 10, 40);
+      ctx.fillText(`Vida: ${player.life}`, 10, 60);
+    }
+
+    function shoot() {
+      if (player.gold > 0) {
+        let dx = 0, dy = 0;
+        if (player.dir === 'right') dx = 4;
+        if (player.dir === 'left') dx = -4;
+        if (player.dir === 'up') dy = -4;
+        if (player.dir === 'down') dy = 4;
+        let bx = player.x * tileSize + tileSize / 2;
+        let by = player.y * tileSize + tileSize / 2;
+        bullets.push({ x: bx, y: by, dx, dy });
+        player.gold--;
+      }
+    }
+
+    function enemyShoot(e, dir) {
+      let dx = 0, dy = 0;
+      if (dir === 'right') dx = 4;
+      if (dir === 'left') dx = -4;
+      if (dir === 'up') dy = -4;
+      if (dir === 'down') dy = 4;
+      let bx = e.x * tileSize + tileSize / 2;
+      let by = e.y * tileSize + tileSize / 2;
+      bullets.push({ x: bx, y: by, dx, dy, fromEnemy: true });
+      e.gold--;
+    }
+
+    function moveEnemies() {
+      for (const e of enemies) {
+        // Se inimigo tem ouro e está alinhado com o player, atira
+        if (e.gold > 0) {
+          if (e.x === player.x) {
+            if (e.y < player.y) { e.dir = 'down'; enemyShoot(e, 'down'); continue; }
+            if (e.y > player.y) { e.dir = 'up'; enemyShoot(e, 'up'); continue; }
+          }
+          if (e.y === player.y) {
+            if (e.x < player.x) { e.dir = 'right'; enemyShoot(e, 'right'); continue; }
+            if (e.x > player.x) { e.dir = 'left'; enemyShoot(e, 'left'); continue; }
+          }
+        }
+        // Se não tem ouro, busca o ouro mais próximo
+        let target = null;
+        if (e.gold === 0 && goldPoints.length > 0) {
+          let minDist = Infinity;
+          for (const g of goldPoints) {
+            const dist = Math.abs(g.x - e.x) + Math.abs(g.y - e.y);
+            if (dist < minDist) {
+              minDist = dist;
+              target = g;
+            }
+          }
+        } else {
+          // Persegue o player
+          target = player;
+        }
+        if (!target) continue;
+        const dx = target.x - e.x;
+        const dy = target.y - e.y;
+        let nx = e.x, ny = e.y;
+        if (Math.abs(dx) > Math.abs(dy)) {
+          nx += dx > 0 ? 1 : -1;
+          e.dir = dx > 0 ? 'right' : 'left';
+        } else if (dy !== 0) {
+          ny += dy > 0 ? 1 : -1;
+          e.dir = dy > 0 ? 'down' : 'up';
+        }
+        // Só move se não for a posição do player e não colidir com outro inimigo
+        if (!(nx === player.x && ny === player.y) && !enemies.some(en => en !== e && en.x === nx && en.y === ny)) {
+          e.x = nx;
+          e.y = ny;
+        }
+      }
+    }
+
+    function update() {
+      bullets.forEach(b => {
+        b.x += b.dx || 0;
+        b.y += b.dy || 0;
+      });
+      bullets = bullets.filter(b => b.x >= 0 && b.x < canvas.width && b.y >= 0 && b.y < canvas.height);
+
+      enemyMoveCounter++;
+      if (enemyMoveCounter >= 10) {
+        moveEnemies();
+        enemyMoveCounter = 0;
+      }
+
+      // Player coleta ouro
+      goldPoints = goldPoints.filter(g => {
+        if (g.x === player.x && g.y === player.y) {
+          player.gold++;
+          return false;
+        }
+        return true;
+      });
+
+      // Inimigos coletam ouro
+      for (const e of enemies) {
+        for (let i = goldPoints.length - 1; i >= 0; i--) {
+          const g = goldPoints[i];
+          if (g.x === e.x && g.y === e.y) {
+            e.gold++;
+            goldPoints.splice(i, 1);
+          }
+        }
+      }
+
+      // Colisão de balas com inimigos
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+        for (let j = bullets.length - 1; j >= 0; j--) {
+          const bullet = bullets[j];
+          if (bullet.fromEnemy) continue; // Só balas do player matam inimigos
+          const ex = enemy.x * tileSize + tileSize / 2;
+          const ey = enemy.y * tileSize + tileSize / 2;
+          const dist = Math.hypot(bullet.x - ex, bullet.y - ey);
+          if (dist < tileSize / 2) {
+            // Dropa o ouro do inimigo ao morrer
+            for (let k = 0; k < enemy.gold; k++) {
+              goldPoints.push({ x: enemy.x, y: enemy.y });
+            }
+            enemies.splice(i, 1);
+            bullets.splice(j, 1);
+            break;
+          }
+        }
+      }
+      // Colisão de balas de inimigos com o player (opcional, pode comentar se não quiser)
+      for (let j = bullets.length - 1; j >= 0; j--) {
+        const bullet = bullets[j];
+        if (!bullet.fromEnemy) continue;
+        const px = player.x * tileSize + tileSize / 2;
+        const py = player.y * tileSize + tileSize / 2;
+        const dist = Math.hypot(bullet.x - px, bullet.y - py);
+        if (dist < tileSize / 2) {
+          player.life--;
+          bullets.splice(j, 1);
+        }
+      }
+      // Fim de jogo: derrota
+      if (player.life <= 0 && !gameOver) {
+        endGame(false);
+      }
+      // Fim de jogo: vitória
+      if (enemies.length === 0 && !gameOver) {
+        endGame(true);
+      }
+    }
+
+    function endGame(win) {
+      gameOver = true;
+      document.getElementById('gameOverMsg').style.display = 'flex';
+      document.getElementById('gameOverText').innerText = win ? `Parabéns, ${player.name}! Você venceu!` : `Game Over, ${player.name}!`;
+    }
+
+    function resetGame(keepName) {
+      // Limpa tudo e reinicia
+      player.x = 5;
+      player.y = 5;
+      player.gold = 0;
+      player.dir = 'right';
+      player.life = 3;
+      if (!keepName) player.name = '';
+      bullets = [];
+      enemies = [];
+      goldPoints = [];
+      enemyMoveCounter = 0;
+      gameOver = false;
+      document.getElementById('gameOverMsg').style.display = 'none';
+      if (!keepName) {
+        startGame();
+      } else {
+        maze = generateArena(cols, rows);
+        rows = maze.length;
+        cols = maze[0].length;
+        spawnGold();
+        spawnEnemies();
+        gameLoop();
+      }
+    }
+
+    // Botões de reinício e troca de nome
+    document.getElementById('btnRestart').onclick = function() { resetGame(true); };
+    document.getElementById('btnChangeName').onclick = function() { resetGame(false); };
+
+    // Permitir Enter ou Espaço para reiniciar na tela de fim de jogo
+    window.addEventListener('keydown', function(e) {
+      if (gameOver && (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar')) {
+        resetGame(true);
+      }
+    });
+
+    function gameLoop() {
+      if (!gameOver) {
+        update();
+        draw();
+        requestAnimationFrame(gameLoop);
+      } else {
+        draw();
+      }
+    }
+
+    // Bloquear movimento em paredes
+    window.addEventListener('keydown', (e) => {
+      if (gameOver) return;
+      let nx = player.x;
+      let ny = player.y;
+      // Mapear teclas WASD para direções
+      const keyMap = {
+        'ArrowUp': 'up', 'w': 'up', 'W': 'up',
+        'ArrowDown': 'down', 's': 'down', 'S': 'down',
+        'ArrowLeft': 'left', 'a': 'left', 'A': 'left',
+        'ArrowRight': 'right', 'd': 'right', 'D': 'right'
+      };
+      const dir = keyMap[e.key];
+      if (e.shiftKey && dir) {
+        player.dir = dir;
+        return;
+      }
+      if (dir === 'up') { ny = Math.max(0, player.y - 1); }
+      if (dir === 'down') { ny = Math.min(rows - 1, player.y + 1); }
+      if (dir === 'left') { nx = player.x - 1; }
+      if (dir === 'right') { nx = player.x + 1; }
+      // Teleporte horizontal
+      if (nx < 0) nx = cols - 1;
+      if (nx >= cols) nx = 0;
+      // Verifica se há inimigo na posição de destino ou parede
+      const blocked = enemies.some(e => e.x === nx && e.y === ny) || !isPath(nx, ny);
+      if (!blocked && dir) {
+        if (dir === 'up') { player.y = ny; player.dir = 'up'; }
+        if (dir === 'down') { player.y = ny; player.dir = 'down'; }
+        if (dir === 'left') { player.x = nx; player.dir = 'left'; }
+        if (dir === 'right') { player.x = nx; player.dir = 'right'; }
+      }
+      if (e.key === ' ' || e.key === 'Spacebar') shoot();
+    });
+
+    // Desenhar a arena
+    function drawMaze() {
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          if (maze[y][x] === 0) {
+            // Parede: azul escuro quase roxo
+            ctx.fillStyle = '#222266';
+            ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+          } else {
+            // Caminho: preto
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+          }
+        }
+      }
+    }
+
+    // Atualizar spawn do player
+    function startGame() {
+      let nome = '';
+      while (!nome) {
+        nome = prompt('Digite seu nome:');
+        if (nome === null) nome = '';
+      }
+      const { x, y } = randomPathCell();
+      player.x = x;
+      player.y = y;
+      player.gold = 0;
+      player.dir = 'right';
+      player.life = 3;
+      player.name = nome;
+      bullets = [];
+      enemies = [];
+      goldPoints = [];
+      enemyMoveCounter = 0;
+      gameOver = false;
+      maze = generateArena(cols, rows);
+      rows = maze.length;
+      cols = maze[0].length;
+      spawnGold();
+      spawnEnemies();
+      gameLoop();
+    }
+    startGame();
+  </script>
+</body>
+</html>
