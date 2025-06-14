@@ -17,6 +17,7 @@
     <div style="margin-top:32px;display:flex;gap:16px;">
       <button id="btnRestart" style="font-size:1em;padding:10px 24px;cursor:pointer;">Jogar Novamente</button>
       <button id="btnChangeName" style="font-size:1em;padding:10px 24px;cursor:pointer;">Trocar Nome</button>
+      <button id="btnChangeDifficulty" style="font-size:1em;padding:10px 24px;cursor:pointer;">Alterar Dificuldade</button>
     </div>
   </div>
 
@@ -28,13 +29,35 @@
     let rows = canvas.height / tileSize;
     let cols = canvas.width / tileSize;
 
-    let player = { x: 5, y: 5, gold: 0, dir: 'right', life: 3, name: '' };
+    let player = { x: 5, y: 5, gold: 0, dir: 'right', life: 3, name: '', difficulty: '' };
     let bullets = [];
     let enemies = [];
     let goldPoints = [];
     let enemyMoveCounter = 0;
     let gameOver = false;
     const enemyNames = ["Zog", "Bip", "Rex", "Mok", "Luz", "Pax", "Vex", "Gor", "Dex", "Nox", "Fiz", "Rik", "Taz", "Jax", "Wex", "Qop", "Zin", "Bax", "Lir", "Miz"];
+    let goldRespawnInterval = null;
+    let level = 1;
+    let playerRank = 1;
+    let playerTunnelCount = 0;
+    let isPhaseTransition = false;
+
+    // Carregar nome e rank do localStorage
+    function loadPlayerData() {
+      const data = localStorage.getItem('pacman_player_data');
+      if (data) {
+        try {
+          const obj = JSON.parse(data);
+          if (obj.name) player.name = obj.name;
+          if (obj.rank) playerRank = obj.rank;
+          if (obj.difficulty) player.difficulty = obj.difficulty;
+        } catch {}
+      }
+    }
+    function savePlayerData() {
+      localStorage.setItem('pacman_player_data', JSON.stringify({ name: player.name, rank: playerRank, difficulty: player.difficulty }));
+    }
+    loadPlayerData();
 
     function getRandomEnemyName(usedNames) {
       let name;
@@ -45,9 +68,8 @@
       return name;
     }
 
-    // --- Procedural Arena Generation (Pac-Man style) ---
+    // --- Procedural Arena Generation (Pac-Man style, blocos menores e mais cruzamentos) ---
     function generateArena(cols, rows) {
-      // Garante dimensões ímpares para simetria
       if (cols % 2 === 0) cols--;
       if (rows % 2 === 0) rows--;
       let arena = Array.from({ length: rows }, () => Array(cols).fill(1)); // 1=caminho, 0=parede
@@ -68,20 +90,23 @@
           if (y > 0 && y < rows - 1 && x > 0 && x < cols - 1) arena[y][x] = 1;
         }
       }
-      // Cruzamentos regulares
-      for (let y = 2; y < rows - 2; y += 4) {
-        for (let x = 2; x < cols - 2; x += 4) {
-          arena[y][x] = 1;
-          if (y + 1 < rows - 1) arena[y + 1][x] = 1;
-          if (x + 1 < cols - 1) arena[y][x + 1] = 1;
-        }
-      }
-      // Paredes curtas e simétricas
-      for (let y = 2; y < rows - 2; y += 2) {
-        for (let x = 2; x < Math.floor(cols / 2); x += 2) {
-          if (Math.random() < 0.35) {
+      // Cruzamentos regulares e paredes menores
+      for (let y = 2; y < rows - 2; y += 3) {
+        for (let x = 2; x < cols - 2; x += 3) {
+          // Pequenos blocos de parede
+          if (Math.random() < 0.5) {
             arena[y][x] = 0;
-            arena[y][cols - 1 - x] = 0; // simetria horizontal
+            arena[rows - 1 - y][x] = 0; // simetria horizontal
+          }
+          // Pequenos segmentos horizontais
+          if (Math.random() < 0.3 && x + 1 < cols - 2) {
+            arena[y][x + 1] = 0;
+            arena[rows - 1 - y][x + 1] = 0;
+          }
+          // Pequenos segmentos verticais
+          if (Math.random() < 0.3 && y + 1 < rows - 2) {
+            arena[y + 1][x] = 0;
+            arena[rows - 1 - (y + 1)][x] = 0;
           }
         }
       }
@@ -120,11 +145,29 @@
       }
     }
 
+    function startGoldRespawn() {
+      if (goldRespawnInterval) return;
+      goldRespawnInterval = setInterval(() => {
+        if (goldPoints.length === 0) {
+          const { x: gx, y: gy } = randomPathCell();
+          goldPoints.push({ x: gx, y: gy });
+        }
+      }, 3000);
+    }
+
+    function stopGoldRespawn() {
+      if (goldRespawnInterval) {
+        clearInterval(goldRespawnInterval);
+        goldRespawnInterval = null;
+      }
+    }
+
     // Atualizar spawnEnemies
     function spawnEnemies() {
       let count = 0;
       let usedNames = new Set();
-      while (count < 3) {
+      let numEnemies = Math.max(2, level + 1); // 2 no primeiro, 3 no segundo, etc
+      while (count < numEnemies) {
         const { x: ex, y: ey } = randomPathCell();
         const isOnPlayer = ex === player.x && ey === player.y;
         const isOnOtherEnemy = enemies.some(e => e.x === ex && e.y === ey);
@@ -177,7 +220,16 @@
       drawMaze();
 
       for (const gold of goldPoints) {
-        drawTile(gold.x, gold.y, 'gold');
+        // Ouro como bolinha amarela
+        ctx.beginPath();
+        ctx.arc(
+          gold.x * tileSize + tileSize / 2,
+          gold.y * tileSize + tileSize / 2,
+          tileSize * 0.18, // raio menor
+          0, 2 * Math.PI
+        );
+        ctx.fillStyle = 'gold';
+        ctx.fill();
       }
 
       for (const e of enemies) {
@@ -228,6 +280,8 @@
       ctx.fillText(`Jogador: ${player.name}`, 10, 20);
       ctx.fillText(`Ouro: ${player.gold}`, 10, 40);
       ctx.fillText(`Vida: ${player.life}`, 10, 60);
+      ctx.fillText(`Level: ${level}`, 10, 80);
+      ctx.fillText(`Rank: ${playerRank}`, 10, 100);
     }
 
     function shoot() {
@@ -254,6 +308,52 @@
       let by = e.y * tileSize + tileSize / 2;
       bullets.push({ x: bx, y: by, dx, dy, fromEnemy: true });
       e.gold--;
+    }
+
+    // --- Função de pathfinding A* ---
+    function astar(start, goal, isPath, cols, rows) {
+      const open = [];
+      const closed = new Set();
+      const cameFrom = {};
+      const gScore = Array.from({ length: rows }, () => Array(cols).fill(Infinity));
+      const fScore = Array.from({ length: rows }, () => Array(cols).fill(Infinity));
+      function hash(x, y) { return `${x},${y}`; }
+      gScore[start.y][start.x] = 0;
+      fScore[start.y][start.x] = Math.abs(goal.x - start.x) + Math.abs(goal.y - start.y);
+      open.push({ x: start.x, y: start.y, f: fScore[start.y][start.x] });
+      const dirs = [ [0,1], [1,0], [0,-1], [-1,0] ];
+      while (open.length > 0) {
+        open.sort((a, b) => a.f - b.f);
+        const current = open.shift();
+        if (current.x === goal.x && current.y === goal.y) {
+          // Reconstruir caminho
+          let path = [];
+          let curr = hash(goal.x, goal.y);
+          while (cameFrom[curr]) {
+            path.push(curr);
+            curr = cameFrom[curr];
+          }
+          path.reverse();
+          return path.map(s => ({ x: +s.split(',')[0], y: +s.split(',')[1] }));
+        }
+        closed.add(hash(current.x, current.y));
+        for (const [dx, dy] of dirs) {
+          const nx = current.x + dx, ny = current.y + dy;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+          if (!isPath(nx, ny)) continue;
+          if (closed.has(hash(nx, ny))) continue;
+          const tentative_g = gScore[current.y][current.x] + 1;
+          if (tentative_g < gScore[ny][nx]) {
+            cameFrom[hash(nx, ny)] = hash(current.x, current.y);
+            gScore[ny][nx] = tentative_g;
+            fScore[ny][nx] = tentative_g + Math.abs(goal.x - nx) + Math.abs(goal.y - ny);
+            if (!open.some(n => n.x === nx && n.y === ny)) {
+              open.push({ x: nx, y: ny, f: fScore[ny][nx] });
+            }
+          }
+        }
+      }
+      return null; // Sem caminho
     }
 
     function moveEnemies() {
@@ -285,30 +385,45 @@
           target = player;
         }
         if (!target) continue;
-        const dx = target.x - e.x;
-        const dy = target.y - e.y;
-        let nx = e.x, ny = e.y;
-        if (Math.abs(dx) > Math.abs(dy)) {
-          nx += dx > 0 ? 1 : -1;
-          e.dir = dx > 0 ? 'right' : 'left';
-        } else if (dy !== 0) {
-          ny += dy > 0 ? 1 : -1;
-          e.dir = dy > 0 ? 'down' : 'up';
-        }
-        // Só move se não for a posição do player e não colidir com outro inimigo
-        if (!(nx === player.x && ny === player.y) && !enemies.some(en => en !== e && en.x === nx && en.y === ny)) {
-          e.x = nx;
-          e.y = ny;
+        // Pathfinding para o próximo passo
+        const path = astar({ x: e.x, y: e.y }, { x: target.x, y: target.y }, isPath, cols, rows);
+        if (path && path.length > 0) {
+          const next = path[0];
+          let tx = next.x;
+          // Teleporte horizontal para inimigos com 40% de chance
+          if (tx < 0 && Math.random() < 0.4) tx = cols - 1;
+          if (tx >= cols && Math.random() < 0.4) tx = 0;
+          // Só move se não for a posição do player, não colidir com outro inimigo e não for parede
+          if (
+            !(tx === player.x && next.y === player.y) &&
+            !enemies.some(en => en !== e && en.x === tx && en.y === next.y) &&
+            isPath(tx, next.y)
+          ) {
+            if (tx > e.x) e.dir = 'right';
+            if (tx < e.x) e.dir = 'left';
+            if (next.y > e.y) e.dir = 'down';
+            if (next.y < e.y) e.dir = 'up';
+            e.x = tx;
+            e.y = next.y;
+          }
         }
       }
     }
 
     function update() {
       bullets.forEach(b => {
-        b.x += b.dx || 0;
-        b.y += b.dy || 0;
+        let bx = b.x + (b.dx || 0);
+        let by = b.y + (b.dy || 0);
+        let gridX = Math.floor(bx / tileSize);
+        let gridY = Math.floor(by / tileSize);
+        if (bx < 0 || bx >= cols * tileSize || by < 0 || by >= rows * tileSize || !isPath(gridX, gridY)) {
+          b.remove = true;
+        } else {
+          b.x = bx;
+          b.y = by;
+        }
       });
-      bullets = bullets.filter(b => b.x >= 0 && b.x < canvas.width && b.y >= 0 && b.y < canvas.height);
+      bullets = bullets.filter(b => !b.remove);
 
       enemyMoveCounter++;
       if (enemyMoveCounter >= 10) {
@@ -324,6 +439,13 @@
         }
         return true;
       });
+
+      // Iniciar respawn de ouro se não houver mais ouro
+      if (goldPoints.length === 0) {
+        startGoldRespawn();
+      } else {
+        stopGoldRespawn();
+      }
 
       // Inimigos coletam ouro
       for (const e of enemies) {
@@ -342,10 +464,20 @@
         for (let j = bullets.length - 1; j >= 0; j--) {
           const bullet = bullets[j];
           if (bullet.fromEnemy) continue; // Só balas do player matam inimigos
-          const ex = enemy.x * tileSize + tileSize / 2;
-          const ey = enemy.y * tileSize + tileSize / 2;
-          const dist = Math.hypot(bullet.x - ex, bullet.y - ey);
-          if (dist < tileSize / 2) {
+          // Colisão bounding box
+          const enemyLeft = enemy.x * tileSize;
+          const enemyRight = enemyLeft + tileSize;
+          const enemyTop = enemy.y * tileSize;
+          const enemyBottom = enemyTop + tileSize;
+          const bulletSize = 4;
+          const bulletLeft = bullet.x;
+          const bulletRight = bullet.x + bulletSize;
+          const bulletTop = bullet.y;
+          const bulletBottom = bullet.y + bulletSize;
+          if (
+            bulletRight > enemyLeft && bulletLeft < enemyRight &&
+            bulletBottom > enemyTop && bulletTop < enemyBottom
+          ) {
             // Dropa o ouro do inimigo ao morrer
             for (let k = 0; k < enemy.gold; k++) {
               goldPoints.push({ x: enemy.x, y: enemy.y });
@@ -373,15 +505,33 @@
         endGame(false);
       }
       // Fim de jogo: vitória
-      if (enemies.length === 0 && !gameOver) {
-        endGame(true);
+      if (enemies.length === 0 && !gameOver && !isPhaseTransition) {
+        isPhaseTransition = true;
+        level++;
+        if (level > playerRank) {
+          playerRank = level;
+          savePlayerData();
+        }
+        // Exibir contador antes de iniciar próxima fase
+        let startNextPhase = () => {
+          maze = generateArena(cols, rows);
+          rows = maze.length;
+          cols = maze[0].length;
+          goldPoints = [];
+          spawnGold();
+          spawnEnemies();
+          isPhaseTransition = false;
+          // Player mantém vida, ouro e posição
+        };
+        showPhaseCountdown(startNextPhase);
       }
     }
 
     function endGame(win) {
       gameOver = true;
       document.getElementById('gameOverMsg').style.display = 'flex';
-      document.getElementById('gameOverText').innerText = win ? `Parabéns, ${player.name}! Você venceu!` : `Game Over, ${player.name}!`;
+      document.getElementById('gameOverText').innerText = win ? `Parabéns, ${player.name}! Você venceu!` : `Game Over, ${player.name}!\nSeu Rank: ${playerRank}`;
+      savePlayerData();
     }
 
     function resetGame(keepName) {
@@ -398,21 +548,44 @@
       enemyMoveCounter = 0;
       gameOver = false;
       document.getElementById('gameOverMsg').style.display = 'none';
+      stopGoldRespawn();
+      level = 1;
+      // playerRank não zera, é o maior level já atingido
+      savePlayerData();
       if (!keepName) {
         startGame();
       } else {
+        // Não pedir dificuldade novamente
+        let vidas = 3;
+        if (player.difficulty === '2') vidas = 2;
+        if (player.difficulty === '3') vidas = 1;
+        const { x, y } = randomPathCell();
+        player.x = x;
+        player.y = y;
+        player.gold = 0;
+        player.dir = 'right';
+        player.life = vidas;
+        bullets = [];
+        enemies = [];
+        goldPoints = [];
+        enemyMoveCounter = 0;
+        gameOver = false;
         maze = generateArena(cols, rows);
         rows = maze.length;
         cols = maze[0].length;
         spawnGold();
         spawnEnemies();
         gameLoop();
+        savePlayerData();
       }
     }
 
-    // Botões de reinício e troca de nome
+    // Botões de reinício, troca de nome e dificuldade
     document.getElementById('btnRestart').onclick = function() { resetGame(true); };
     document.getElementById('btnChangeName').onclick = function() { resetGame(false); };
+    document.getElementById('btnChangeDifficulty').onclick = function() {
+      startGame(true);
+    };
 
     // Permitir Enter ou Espaço para reiniciar na tela de fim de jogo
     window.addEventListener('keydown', function(e) {
@@ -453,8 +626,8 @@
       if (dir === 'left') { nx = player.x - 1; }
       if (dir === 'right') { nx = player.x + 1; }
       // Teleporte horizontal
-      if (nx < 0) nx = cols - 1;
-      if (nx >= cols) nx = 0;
+      if (nx < 0) { nx = cols - 1; playerTunnelCount++; }
+      if (nx >= cols) { nx = 0; playerTunnelCount++; }
       // Verifica se há inimigo na posição de destino ou parede
       const blocked = enemies.some(e => e.x === nx && e.y === ny) || !isPath(nx, ny);
       if (!blocked && dir) {
@@ -484,18 +657,34 @@
     }
 
     // Atualizar spawn do player
-    function startGame() {
-      let nome = '';
-      while (!nome) {
-        nome = prompt('Digite seu nome:');
-        if (nome === null) nome = '';
+    function startGame(forceAskDifficulty = false) {
+      // Carregar nome salvo se ainda não carregou
+      if (!player.name) loadPlayerData();
+      let nome = player.name || '';
+      if (!nome) {
+        while (!nome) {
+          nome = prompt('Digite seu nome:');
+          if (nome === null) nome = '';
+        }
       }
+      // Seleção de dificuldade (só pede se não houver salva ou se for forçado)
+      let dificuldade = player.difficulty || '';
+      if (forceAskDifficulty || !['1', '2', '3'].includes(dificuldade)) {
+        while (!['1', '2', '3'].includes(dificuldade)) {
+          dificuldade = prompt('Escolha a dificuldade:\n1 - Fácil (3 vidas)\n2 - Normal (2 vidas)\n3 - Difícil (1 vida)');
+          if (dificuldade === null) dificuldade = '';
+        }
+      }
+      player.difficulty = dificuldade;
+      let vidas = 3;
+      if (dificuldade === '2') vidas = 2;
+      if (dificuldade === '3') vidas = 1;
       const { x, y } = randomPathCell();
       player.x = x;
       player.y = y;
       player.gold = 0;
       player.dir = 'right';
-      player.life = 3;
+      player.life = vidas;
       player.name = nome;
       bullets = [];
       enemies = [];
@@ -508,7 +697,45 @@
       spawnGold();
       spawnEnemies();
       gameLoop();
+      savePlayerData();
     }
+
+    // Adicionar elemento para o contador de fase
+    if (!document.getElementById('phaseCountdown')) {
+      const countdownDiv = document.createElement('div');
+      countdownDiv.id = 'phaseCountdown';
+      countdownDiv.style.position = 'fixed';
+      countdownDiv.style.top = '0';
+      countdownDiv.style.left = '0';
+      countdownDiv.style.width = '100vw';
+      countdownDiv.style.height = '100vh';
+      countdownDiv.style.display = 'none';
+      countdownDiv.style.justifyContent = 'center';
+      countdownDiv.style.alignItems = 'center';
+      countdownDiv.style.background = 'rgba(0,0,0,0.7)';
+      countdownDiv.style.color = 'white';
+      countdownDiv.style.fontSize = '5em';
+      countdownDiv.style.zIndex = '20';
+      countdownDiv.style.textAlign = 'center';
+      document.body.appendChild(countdownDiv);
+    }
+    function showPhaseCountdown(callback) {
+      const div = document.getElementById('phaseCountdown');
+      let count = 3;
+      div.innerText = count;
+      div.style.display = 'flex';
+      let interval = setInterval(() => {
+        count--;
+        if (count > 0) {
+          div.innerText = count;
+        } else {
+          clearInterval(interval);
+          div.style.display = 'none';
+          if (callback) callback();
+        }
+      }, 1000);
+    }
+
     startGame();
   </script>
 </body>
