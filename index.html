@@ -503,21 +503,22 @@
           }
         }
       }
-      // Colisão de balas de inimigos com o player (opcional, pode comentar se não quiser)
-      for (let j = bullets.length - 1; j >= 0; j--) {
-        const bullet = bullets[j];
-        if (!bullet.fromEnemy) continue;
-        const px = player.x * tileSize + tileSize / 2;
-        const py = player.y * tileSize + tileSize / 2;
-        const dist = Math.hypot(bullet.x - px, bullet.y - py);
-        if (dist < tileSize / 2) {
-          player.life--;
-          bullets.splice(j, 1);
+      if (!isPhaseTransition) {
+        for (let j = bullets.length - 1; j >= 0; j--) {
+          const bullet = bullets[j];
+          if (!bullet.fromEnemy) continue;
+          const px = player.x * tileSize + tileSize / 2;
+          const py = player.y * tileSize + tileSize / 2;
+          const dist = Math.hypot(bullet.x - px, bullet.y - py);
+          if (dist < tileSize / 2) {
+            player.life--;
+            bullets.splice(j, 1);
+          }
         }
-      }
-      // Fim de jogo: derrota
-      if (player.life <= 0 && !gameOver) {
-        endGame(false);
+        // Fim de jogo: derrota
+        if (player.life <= 0 && !gameOver) {
+          endGame(false);
+        }
       }
       // Fim de jogo: vitória
       if (enemies.length === 0 && !gameOver && !isPhaseTransition) {
