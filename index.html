@@ -11,7 +11,13 @@
   </style>
 </head>
 <body>
-  <canvas id="gameCanvas" width="1024" height="768"></canvas>
+  <div id="mainMenu" style="position:fixed;top:0;left:0;width:100vw;height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;background:rgba(0,0,0,0.9);z-index:100;">
+    <div style="font-size:3em;margin-bottom:32px;">Gold Hunter Arena</div>
+    <button class="btnMode" data-mode="classic" style="font-size:1.5em;padding:16px 48px;margin:12px;">Clássico (PvE)</button>
+    <button class="btnMode" data-mode="ffa" style="font-size:1.5em;padding:16px 48px;margin:12px;">Cada um por si (PvE)</button>
+    <button class="btnMode" data-mode="online" style="font-size:1.5em;padding:16px 48px;margin:12px;">Multiplayer Online</button>
+  </div>
+  <canvas id="gameCanvas" width="1024" height="768" style="display:none;"></canvas>
   <div id="gameOverMsg" style="position:fixed;top:0;left:0;width:100vw;height:100vh;display:none;flex-direction:column;justify-content:center;align-items:center;background:rgba(0,0,0,0.8);color:white;font-size:2em;z-index:10;">
     <div id="gameOverText"></div>
     <div style="margin-top:32px;display:flex;gap:16px;">
@@ -19,6 +25,14 @@
       <button id="btnChangeName" style="font-size:1em;padding:10px 24px;cursor:pointer;">Trocar Nome</button>
       <button id="btnChangeDifficulty" style="font-size:1em;padding:10px 24px;cursor:pointer;">Alterar Dificuldade</button>
     </div>
+  </div>
+  <div id="multiplayerModal" style="position:fixed;top:0;left:0;width:100vw;height:100vh;display:none;flex-direction:column;justify-content:center;align-items:center;background:rgba(0,0,0,0.8);color:white;font-size:2em;z-index:110;">
+    <div style="margin-bottom:24px;">Multiplayer Online</div>
+    <button id="btnCreateRoom" style="font-size:1em;padding:10px 24px;margin:8px;">Criar Sala</button>
+    <div style="margin:16px 0;">ou</div>
+    <input id="inputRoomCode" placeholder="Código da sala" style="font-size:1em;padding:8px 16px;margin-bottom:8px;" maxlength="8" />
+    <button id="btnJoinRoom" style="font-size:1em;padding:10px 24px;">Entrar na Sala</button>
+    <button id="btnBackToMenu" style="font-size:0.8em;padding:6px 16px;margin-top:24px;">Voltar</button>
   </div>
 
   <script>
@@ -41,6 +55,7 @@
     let playerRank = 1;
     let playerTunnelCount = 0;
     let isPhaseTransition = false;
+    let gameMode = 'classic'; // classic, ffa, online
 
     // Carregar nome e rank do localStorage
     function loadPlayerData() {
@@ -771,7 +786,38 @@
       });
     }
 
-    startGame();
+    // Menu inicial
+    const mainMenu = document.getElementById('mainMenu');
+    const gameCanvas = document.getElementById('gameCanvas');
+    const multiplayerModal = document.getElementById('multiplayerModal');
+    document.querySelectorAll('.btnMode').forEach(btn => {
+      btn.onclick = function() {
+        gameMode = btn.getAttribute('data-mode');
+        if (gameMode === 'online') {
+          mainMenu.style.display = 'none';
+          multiplayerModal.style.display = 'flex';
+        } else {
+          mainMenu.style.display = 'none';
+          gameCanvas.style.display = '';
+          startGame();
+        }
+      };
+    });
+    // Multiplayer modal handlers
+    document.getElementById('btnCreateRoom').onclick = function() {
+      // Aqui depois vai a lógica de criar sala
+      alert('Função de criar sala ainda não implementada.');
+    };
+    document.getElementById('btnJoinRoom').onclick = function() {
+      // Aqui depois vai a lógica de entrar em sala
+      const code = document.getElementById('inputRoomCode').value.trim();
+      if (!code) { alert('Digite o código da sala!'); return; }
+      alert('Função de entrar em sala ainda não implementada.');
+    };
+    document.getElementById('btnBackToMenu').onclick = function() {
+      multiplayerModal.style.display = 'none';
+      mainMenu.style.display = 'flex';
+    };
   </script>
 </body>
 </html>
