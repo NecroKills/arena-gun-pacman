@@ -293,7 +293,7 @@
       ctx.textAlign = 'left';
       ctx.font = '16px sans-serif';
       ctx.fillText(`Jogador: ${player.name}`, 10, 20);
-      ctx.fillText(`Ouro: ${player.gold}`, 10, 40);
+      ctx.fillText(`Munição: ${player.gold}`, 10, 40);
       ctx.fillText(`Vida: ${player.life}`, 10, 60);
       ctx.fillText(`Level: ${level}`, 10, 80);
       ctx.fillText(`Rank: ${playerRank}`, 10, 100);
@@ -534,10 +534,13 @@
           rows = maze.length;
           cols = maze[0].length;
           goldPoints = [];
+          // Resetar munição do player e dos inimigos
+          player.gold = 0;
+          for (const e of enemies) { e.gold = 0; }
           spawnGold();
           spawnEnemies();
           isPhaseTransition = false;
-          // Player mantém vida, ouro e posição
+          // Player mantém vida, posição e direção
         };
         showPhaseCountdown(startNextPhase);
       }
